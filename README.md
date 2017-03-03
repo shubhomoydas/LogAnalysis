@@ -40,7 +40,8 @@ The command line options are:
             data over multiple years. Usefulness is mostly moot at this point for this project.
         
         6: predict load for next minute -- Basically average of last 5 minutes load.
-            The predictions match quite well with true values. see:
-            <a href="https://github.com/shubhomoydas/WeblogChallenge/blob/master/docs/predicted_server_load.pdf">
         
     - ip address: client IP -- required only for operation 3 (above).
+
+The predictions by operation 6 match quite well with true values. See: 
+<a href="https://github.com/shubhomoydas/WeblogChallenge/blob/master/docs/predicted_server_load.pdf">plot.</a>
