@@ -2,3 +2,5 @@
 /target
 /personal
 .DS_Store
+data/split
+*.log
