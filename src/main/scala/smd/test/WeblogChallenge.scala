@@ -324,8 +324,8 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
      * high-level user activities. We are taking a few liberties here
      * in sanitizing the requests so as to: 
      * 	1. reduce the number of unique urls to a manageable size 
-     * 			(important for the Markov navigation model) and, 
-     * 	2. get to a proper level of abstraction of site navigation.
+     *         (important for the Markov navigation model) and, 
+     *  2. get to a proper level of abstraction of site navigation.
      */
     def cardinal_url(url: String): String = {
         //val PAT1 = """/(products?)/[0-9]+/""".r
@@ -719,9 +719,10 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
     
     /**
      * We use DUMMY encoding instead of one-hot-encoding (OHE) because OHE
-     * could make the design matrix singular and therefore is unsuitable for
-     * linear models. (DUMMY represents n levels by binary vector of length
-     * n-1 whereas OHE represents n levels by binary vector of length n)
+     * could make the design matrix singular in the presence of an intercept
+     * term and therefore is unsuitable for linear models. (DUMMY represents
+     * n levels of a categorical feature by a binary vector of length n-1
+     * whereas OHE represents n levels by a binary vector of length n)
      * 
      * Note: The time-related features are being treated as categorical in this
      * regression approach.
