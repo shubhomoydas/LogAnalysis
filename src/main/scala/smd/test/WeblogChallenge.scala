@@ -159,8 +159,8 @@ object Weblog extends java.io.Serializable {
 
     if (func == 3) {
       
-      //ip = "117.214.109.17"
-      // below filtering is actually redundant now since we are filtering the rawData much earlier
+      // Note: below filtering is actually redundant now since 
+      // we are filtering the rawData much earlier.
       val user_profile_ip = user_profiles.filter(up => up.ip == ip)
       
       val unique_urls_ip = weblog.get_unique_urls(user_profile_ip)
@@ -188,7 +188,6 @@ object Weblog extends java.io.Serializable {
     }
     
     if (func == 5) {
-      //ip = "220.226.206.7"
       val tmpreqs = reqs  //.filter(req => req.client_ip == ip)
       val instances = weblog.generate_load_regression_data(tmpreqs)
       weblog.write_seq_to_file(
@@ -196,11 +195,8 @@ object Weblog extends java.io.Serializable {
         features_file)
       
       val training = sc.parallelize(instances.toSeq).cache()
-      //val model: org.apache.spark.mllib.regression.LinearRegressionModel = null
-      //val num_iters = 100
-      //val step_size = 0.00000001
       val algo = new org.apache.spark.mllib.regression.LinearRegressionWithSGD()
-      val model = algo run training  //, num_iters, step_size)
+      val model = algo run training
       
       if (model != null) model.save(sc, lr_model_file)
       // Now, the above model might be used to predict server load...
@@ -211,7 +207,7 @@ object Weblog extends java.io.Serializable {
     
     if (func == 6) {
       
-      // just a testing string
+      // just a test time that works on the provided log file.
       val in_time_str = "2015-07-22 09:03"
       
       // predict load for next minute: first get current time till minutes
@@ -273,6 +269,7 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
         // We will ignore the last three digits
         val D_FORMAT = "yyyy-MM-dd'T'HH:mm:ss.SSS"
         val d_format = new java.text.SimpleDateFormat(D_FORMAT)
+        
         //d_format.parse(str_date.substring(0, str_date.length-4))
         d_format.parse(str_date.substring(0, 23))
     }
@@ -306,6 +303,9 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
         time_to_reach: Long,
         session_id: Int)
     
+    /**
+     * Remove the redundant stuff from URLs...
+     */
     def parse_url(req: String): String = {
         val PATTERN = """\"(GET|POST|HEAD|DELETE|PUT) https?://((www|shop|m)\.)?paytm.com:(80|443)([^?]*).*\"""".r
         var url = PATTERN.replaceAllIn(req, "$5")
@@ -316,11 +316,12 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
     }
     
     /**
-     * Urls contain lots of data irrelevant for determining high-level
-     * user activities. We are taking a few liberties here in sanitizing
-     * the requests so as to: (a) reduce the number of unique urls to
-     * a manageable size and, (b) get to a proper level of abstraction of
-     * site navigation.
+     * Urls contain lots of stuff which are irrelevant for determining
+     * high-level user activities. We are taking a few liberties here
+     * in sanitizing the requests so as to: 
+     * 	1. reduce the number of unique urls to a manageable size 
+     * 			(important for the Markov navigation model) and, 
+     * 	2. get to a proper level of abstraction of site navigation.
      */
     def cardinal_url(url: String): String = {
         //val PAT1 = """/(products?)/[0-9]+/""".r
@@ -367,13 +368,101 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
         avg_session_length: Double
     )
     
+    /**
+     * This is the most crucial method for user analysis. The first step
+     * is to sessionalize the data. We group all records of a user, sort
+     * them on time, and partition the records into session depending on
+     * whether the time between two successive requests from a user (IP)
+     * is greater than 30 mins.
+     * 
+     * Technical Note:
+     * Scala has some repartition / sort within partition operations.
+     * These features could help speed up the below sessionalization code.
+     */
+    def get_user_profiles(user_reqs: org.apache.spark.rdd.RDD[(String, Iterable[Request])]): 
+                org.apache.spark.rdd.RDD[UserProfile] = {
+        
+        val max_session_gap = 30*60  // gap in seconds
+        
+        val user_profiles = user_reqs.map(user => {
+            var rs: Seq[Request] = Seq[Request]()
+            var prev_time = (new java.text.SimpleDateFormat("yyyy-MM-dd")).parse("1900-01-01")
+            val ip = user._1
+            val ureqs = user._2
+            val oreqs = ureqs.toSeq.sortWith((x, y) => x.timestamp.before(y.timestamp))
+            var sess_id = 0
+            var started_session = false
+            var session_start_time = prev_time
+            for (req <- oreqs) {
+                val dd = getDateDiff(prev_time, req.timestamp)
+                if (dd > max_session_gap) {
+                    sess_id = sess_id + 1
+                    started_session = true
+                    session_start_time = req.timestamp
+                } else {
+                    started_session = false
+                }
+                val time_to_reach: Long = if (started_session) 0L else dd
+                rs = rs :+ req.copy(time_to_reach=time_to_reach, session_id=sess_id)
+                prev_time = req.timestamp
+            }
+            val max_sessions = sess_id
+            
+            // get the min and max times of each user session
+            val session_start_end = reduceByKey(
+                rs.map(req => (req.session_id, (req.timestamp, req.timestamp, 1))), 
+                (a: (java.util.Date, java.util.Date, Int), 
+                 b: (java.util.Date, java.util.Date, Int)) => 
+                        (minDate(a._1, b._1), maxDate(a._2, b._2), a._3 + b._3))
+                        
+            // get the session durations and sort by session time in descending order.
+            val session_dur = session_start_end.map(
+                sess => (sess._1, getDateDiff(sess._2._1, sess._2._2), sess._2._3)
+            ).toSeq.sortBy((-1)*_._2)
+            
+            // Get the average session duration for a user.
+            // This info could be moved out of UserProfile if
+            // not required very frequently.
+            val total_user_dur = session_dur.reduce(
+                    (a, b) => (0, a._2 + b._2, a._3 + b._3) // put dummy 0 as session id
+                )
+            val avg_session_length = total_user_dur._2*1.0 / session_dur.length
+            
+            // Now get count of each unique url in a session
+            // We do not really need to store this info un UserProfile
+            // structure since it is NOT a frequently requested info.
+            // Some data structure refactoring should remove this out.
+            // The saving grace is that the Strings URLs are most likely
+            // going to be shared (by reference) and hence not take too 
+            // much memory.
+            val session_url_count = reduceByKey(
+                rs.map(req => ((req.session_id, req.url), 1)),
+                (a:Int, b:Int) => a + b).sortBy(_._1)
+            
+            // Now get count of unique urls per session.
+            // Similar to session_url_count, session_unique_url_counts
+            // should also be moved out of UserProfile.
+            val session_unique_url_counts = reduceByKey(
+                session_url_count.map(urls => (urls._1._1, 1)),
+                (a:Int, b:Int) => a + b).sortBy(_._1)
+            
+            UserProfile(ip, max_sessions, rs, session_start_end, 
+                        session_dur, session_url_count, 
+                        session_unique_url_counts, avg_session_length)
+        })
+        
+        user_profiles
+    
+    }
+    
     case class UrlInfo (id: Int, url: String, count: Int, time_to_reach: Double)
     
     def get_unique_urls(user_profiles: org.apache.spark.rdd.RDD[UserProfile]):
             org.apache.spark.rdd.RDD[(Int, UrlInfo)] = {
         var unique_urls: org.apache.spark.rdd.RDD[(Int, UrlInfo)] = null
         if (false) {
-            // load precomputed URL info in case it takes long to compute
+            // load precomputed URL info if saved earlier.
+            // Note: this should really be done by caller method and moved out of here.
             val urls_file = "output/urls.txt"
             unique_urls = sc.textFile(urls_file).map(line => {
                 val tkns = line.split(",")
@@ -405,15 +494,19 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
     }
     
     /**
-     * To predict the next url for user, we consider a Markovian model:
-     * 1. Build [N x N] transition probability matrix from current url to next.
-     * 2. The data might be for an individual user - in which case the
+     * To predict the next url for user, we consider a Markovian model.
+     * 1. Requires computing transition probabilities from current url to next.
+     * 2. The data might be for a specific user - in which case the
      * 	  user_profiles should be filtered on client IP.
      * 3. Once the probabilities have been computed, we simulate navigation
      *    and compute required statistics such as avg. session length,
      *    unique urls visited, etc.
      */
     
+    /**
+     * Computes the transition probabilities from historical data.
+     * Assumes that the user_profiles have user requests ordered by timestamp.
+     */
     def generate_transition_data(user_profiles: org.apache.spark.rdd.RDD[UserProfile], 
              id2url: Map[Int, UrlInfo], url2id: Map[String, Int]): org.apache.spark.rdd.RDD[(Int, Int, Double, Double)] = {
         
@@ -423,6 +516,8 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
             var prev_urlid = -2 // a marker for start of navigation
             var prev_time = new java.util.Date()
             var started_session = false
+            // Note: up.reqs are already sorted by timestamp.
+            // Hence we can simply traverse in order.
             for (req <- up.reqs) {
                 val dd = getDateDiff(prev_time, req.timestamp)
                 if (req.session_id == s) {
@@ -464,7 +559,11 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
         to_probs: Array[Double], 
         durs: Array[Double], 
         multinomial: org.apache.commons.math3.distribution.EnumeratedIntegerDistribution)
-        
+    
+    /**
+     * Creates TransitionInfo objects from raw flat transition data.
+     * The raw data is computed by generate_transition_data()
+     */
     def build_transition_lookups(raw_trans: org.apache.spark.rdd.RDD[(Int, Int, Double, Double)]): Map[Int, TransitionInfo] = {
         val tmp = raw_trans.map(x => {
             (x._1.toInt, (x._1.toInt, x._2.toInt, x._3.toDouble, x._4.toDouble))
@@ -551,7 +650,8 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
         
         var raw_trans: org.apache.spark.rdd.RDD[(Int, Int, Double, Double)] = null
         if (false) {
-          // load precomputed transition probabilities in case it takes long to compute
+          // load precomputed transition probabilities if saved earlier.
+          // Note: this should really be done by caller method and moved out of here.
           val transitions_file = "output/transitions.txt"
           raw_trans = sc.textFile(transitions_file).map(line => {
             val tkns = line.split(",")
@@ -567,92 +667,6 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
         
         (tm, l, u)
         
-        /*
-        for (i <- 0 to 20) {
-          if (transinfo.exists(_._1 == i)) {
-            val (tm, l, u) = simulate_nav_multiple(i, 200, transinfo, id2url)
-            println("Avg Time: " + tm + ", avg nav length: " + l + ", avg unique url: " + u + ", " + id2url(i).url)
-          }
-        }
-        */
-    }
-    
-    /**
-     * This is the most crucial method for user analysis. The first step
-     * is to sessionalize the data. We group all records of a user, sort
-     * them on time, and partition the records into session depending on
-     * whether the time between two successive requests from a user (IP)
-     * is greater than 30 mins.
-     * 
-     * Technical Note:
-     * Scala has some repartition / sort within partition operations.
-     * These features could help speed up the below sessionalization code.
-     */
-    def get_user_profiles(user_reqs: org.apache.spark.rdd.RDD[(String, Iterable[Request])]): 
-                org.apache.spark.rdd.RDD[UserProfile] = {
-        
-        val max_session_gap = 30*60  // gap in seconds
-        
-        val user_profiles = user_reqs.map(user => {
-            var rs: Seq[Request] = Seq[Request]()
-            var prev_time = (new java.text.SimpleDateFormat("yyyy-MM-dd")).parse("1900-01-01")
-            val ip = user._1
-            val ureqs = user._2
-            val oreqs = ureqs.toSeq.sortWith((x, y) => x.timestamp.before(y.timestamp))
-            var sess_id = 0
-            var started_session = false
-            var session_start_time = prev_time
-            for (req <- oreqs) {
-                val dd = getDateDiff(prev_time, req.timestamp)
-                if (dd > max_session_gap) {
-                    sess_id = sess_id + 1
-                    started_session = true
-                    session_start_time = req.timestamp
-                } else {
-                    started_session = false
-                }
-                //val time_to_reach = getDateDiff(session_start_time, req.timestamp)
-                val time_to_reach: Long = if (started_session) 0L else dd
-                rs = rs :+ req.copy(time_to_reach=time_to_reach, session_id=sess_id)
-                prev_time = req.timestamp
-            }
-            val max_sessions = sess_id
-            
-            // get the min and max times of each user session
-            val session_start_end = reduceByKey(
-                rs.map(req => (req.session_id, (req.timestamp, req.timestamp, 1))), 
-                (a: (java.util.Date, java.util.Date, Int), 
-                 b: (java.util.Date, java.util.Date, Int)) => 
-                        (minDate(a._1, b._1), maxDate(a._2, b._2), a._3 + b._3))
-                        
-            // get the session durations and sort by session time in descending order.
-            val session_dur = session_start_end.map(
-                sess => (sess._1, getDateDiff(sess._2._1, sess._2._2), sess._2._3)
-            ).toSeq.sortBy((-1)*_._2)
-            
-            // Get the average session duration for a user
-            val total_user_dur = session_dur.reduce(
-                    (a, b) => (0, a._2 + b._2, a._3 + b._3) // put dummy 0 as session id
-                )
-            val avg_session_length = total_user_dur._2*1.0 / session_dur.length
-            
-            // now get count of each unique url in a session
-            val session_url_count = reduceByKey(
-                rs.map(req => ((req.session_id, req.url), 1)),
-                (a:Int, b:Int) => a + b).sortBy(_._1)
-            
-            // now get count of unique urls per session
-            val session_unique_url_counts = reduceByKey(
-                session_url_count.map(urls => (urls._1._1, 1)),
-                (a:Int, b:Int) => a + b).sortBy(_._1)
-            
-            UserProfile(ip, max_sessions, rs, session_start_end, 
-                        session_dur, session_url_count, 
-                        session_unique_url_counts, avg_session_length)
-        })
-        
-        user_profiles
-    
     }
     
     /**
@@ -674,7 +688,6 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
     def get_simple_date_features(date: java.util.Date): (Int, Int, Int, Int, Int) = {
         val cal = java.util.Calendar.getInstance()
         cal.setTime(date)
-        //val quarter_of_hour =  (cal.get(java.util.Calendar.MINUTE) + 15) / 15
         val fiver_hour =  (cal.get(java.util.Calendar.MINUTE) + 5) / 5
         (cal.get(java.util.Calendar.MONTH), 
             cal.get(java.util.Calendar.WEEK_OF_MONTH), 
