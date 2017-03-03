@@ -97,6 +97,10 @@ object Weblog extends java.io.Serializable {
       // if the operation is for a specific user/ip, it would be *much* efficient
       // to filter the raw data at the earliest.
       rawData = rawData.map(line => (line, line.split(" ")(2))).filter(line => line._2.startsWith(ip)).map(x => x._1)
+      if (rawData.count == 0) {
+        println("IP: " + ip + " not found...")
+        return
+      }
     }
 
     val reqs = rawData.map(line => weblog.parse_request(line))
