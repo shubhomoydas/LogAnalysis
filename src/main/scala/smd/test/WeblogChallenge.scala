@@ -5,9 +5,7 @@
  * 
  * spark-shell --master local[4] --driver-memory 2g
  *
- * :load /Users/moy/work/scala-projects/ScalaProject/scripts/WeblogChallenge.txt
- *
- * spark-submit /Users/moy/work/scala-projects/ScalaProject/scripts/WeblogChallenge.txt
+ * spark-submit --master local[4] target/WeblogChallenge-0.1.0-jar-with-dependencies.jar 3 14.141.255.74
  *
  */
 
@@ -49,7 +47,7 @@ object Weblog extends java.io.Serializable {
 
     val weblog = new Weblog(sc)
     
-    val debug_mode = true
+    val debug_mode = false
     
     var func: Int = -1
     var ip: String = ""
