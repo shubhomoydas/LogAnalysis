@@ -18,13 +18,13 @@ The command line options are:
 
     - operation: [0|1|2|3|4|5|6]
     
-        0: generate url / user profile data; 
+        0: generate url / user profile data
         
-        1: generate transition data; 
+        1: generate transition data
         
         2: generate transition data and simulate arbitrary user navigation
         
-        3: simulate navigation for a IP; 
+        3: simulate navigation for a client IP (requires ip address)
         
         4: generate time series data for server load
         
