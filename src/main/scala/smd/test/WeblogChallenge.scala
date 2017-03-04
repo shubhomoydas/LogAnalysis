@@ -27,7 +27,7 @@ object Weblog extends java.io.Serializable {
   
   /**
    * The options (in order) are:
-   *   - operation: [0|1|2|3|4|5|6]
+   *   - operation: [0|1|2|3|4|5|6|7|8]
    *   	   0: generate url / user profile data; 
    *       1: generate transition data; 
    *       2: generate transition data and simulate arbitrary user navigation
@@ -35,6 +35,8 @@ object Weblog extends java.io.Serializable {
    *       4: generate time series data for server load
    *       5: generate server load data for regression
    *       6: predict load for next minute
+   *       7: predict avg. session time for a IP by regression
+   *       8: predict avg. unique URL visits for a IP by regression
    *   - IP: client IP
    */
   def main(args: Array[String]): Unit = {
@@ -55,12 +57,12 @@ object Weblog extends java.io.Serializable {
     if (args.length > 1) ip = args(1)
     
     println("function: " + func + "; ip: " + ip)
-    if (!(func >= 0 && func <= 6)) {
-      println("Invalid operation " + func + ". Select from [ 0 | 1 | 2 | 3 | 4 | 5 | 6 ]")
+    if (!(func >= 0 && func <= 8)) {
+      println("Invalid operation " + func + ". Select from [ 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8]")
       return
     }
     
-    if (func == 3 && ip.length == 0) {
+    if ((func == 3 || func == 7 || func == 8) && ip.length == 0) {
       println("Need IP for operation " + func)
       return
     }
@@ -102,8 +104,9 @@ object Weblog extends java.io.Serializable {
         return
       }
     }
-
-    val reqs = rawData.map(line => weblog.parse_request(line))
+    
+    // a filter to remove some ill-formed requests
+    val reqs = rawData.map(line => weblog.parse_request(line)).filter(req => !req.client_ip.startsWith("\""))
 
     val user_reqs = reqs.groupBy(req => req.client_ip)
 
@@ -225,6 +228,16 @@ object Weblog extends java.io.Serializable {
       
     }
     
+    if (func == 7) {
+      val avg_session_dur = weblog.predict_time_url_ip(user_profiles, ip, true)
+      println("Predicted avg session duration for ip " + ip + " is " + avg_session_dur)
+    }
+    
+    if (func == 8) {
+      val avg_session_url = weblog.predict_time_url_ip(user_profiles, ip, false)
+      println("Predicted avg unique urls for ip " + ip + " is " + avg_session_url)
+    }
+    
     sc.stop()
     
   }
@@ -242,6 +255,10 @@ class Weblog() extends java.io.Serializable {
     import org.apache.spark.mllib.regression.LinearRegressionModel
     import org.apache.spark.mllib.regression.LinearRegressionWithSGD
     
+    import org.apache.spark.mllib.tree.RandomForest
+    import org.apache.spark.mllib.tree.model.RandomForestModel
+    import org.apache.spark.mllib.util.MLUtils
+
     def reduceByKey[K, V](x: Seq[(K, V)], func: (V,V) => V): Seq[(K, V)] = {
         val map = collection.mutable.Map[K, V]()
         x.foreach { e =>
@@ -653,6 +670,83 @@ class Weblog() extends java.io.Serializable {
     }
     
     /**
+     * Here we predict the session time /  # unique urls by RandomForest regression.
+     * I am skeptical about it's usefulness. But cursory exploration on the data revealed
+     * there is some predictive power in this treatment.
+     */
+    def predict_time_url_ip(user_profiles: org.apache.spark.rdd.RDD[UserProfile], 
+        ip: String, pred_sess_time: Boolean) : Double = {
+        var features: org.apache.spark.rdd.RDD[org.apache.spark.mllib.regression.LabeledPoint] = null
+      
+        if (pred_sess_time) {
+            // session durations
+            features = user_profiles.map(up => {
+                up.session_dur.map(sess => {
+                    val ipp = up.ip.split("\\.")
+                    org.apache.spark.mllib.regression.LabeledPoint(
+                        sess._2,
+                        org.apache.spark.mllib.linalg.Vectors.dense(
+                            Array(ipp(0).toDouble,ipp(1).toDouble,ipp(2).toDouble,ipp(3).toDouble)
+                        )
+                    )
+                })
+            }).flatMap(x=>x)
+        } else {
+            // unique URLs
+            features = user_profiles.map(up => {
+                up.session_unique_url_counts.map(sess => {
+                    val ipp = up.ip.split("\\.")
+                    org.apache.spark.mllib.regression.LabeledPoint(
+                        sess._2,
+                        org.apache.spark.mllib.linalg.Vectors.dense(
+                            Array(ipp(0).toDouble,ipp(1).toDouble,ipp(2).toDouble,ipp(3).toDouble)
+                        )
+                    )
+                })
+            }).flatMap(x=>x)
+        }
+        
+        val categoricalFeaturesInfo = Map[Int, Int]()
+        val numTrees = 20 // Use more in practice.
+        val featureSubsetStrategy = "auto" // Let the algorithm choose.
+        val impurity = "variance"
+        val maxDepth = 4
+        val maxBins = 32
+        
+        val splits = features.randomSplit(Array(0.7, 0.3))
+        val (trainingData, testData) = (splits(0), splits(1))
+        
+        val model = RandomForest.trainRegressor(trainingData, categoricalFeaturesInfo,
+          numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)
+        
+        /*
+        // Evaluate model on train instances and compute train error
+        val labelsAndPredictions = trainingData.map { point =>
+          val prediction = model.predict(point.features)
+          (point.label, prediction)
+        }
+        val trainingMSE = labelsAndPredictions.map{ case(v, p) => math.pow((v - p), 2)}.mean()
+        println("Training Mean Squared Error = " + trainingMSE)
+        */
+        
+        // Evaluate model on test instances and compute test error
+        val labelsAndPredictions = testData.map { point =>
+          val prediction = model.predict(point.features)
+          (point.label, prediction)
+        }
+        val testMSE = labelsAndPredictions.map{ case(v, p) => math.pow((v - p), 2)}.mean()
+        
+        println("Test Mean Squared Error = " + testMSE)
+        
+        val ipp = ip.split("\\.")
+        val ip_features = org.apache.spark.mllib.linalg.Vectors.dense(
+                        Array(ipp(0).toDouble,ipp(1).toDouble,ipp(2).toDouble,ipp(3).toDouble)
+                    )
+        val prediction = model.predict(ip_features)
+        prediction
+    }
+    
+    /**
      * Predict the expected server load (requests/sec) in the next minute.
      * 
      * This might be done in a number of ways of which three explored here are:
@@ -668,15 +762,14 @@ class Weblog() extends java.io.Serializable {
      * 
      * Note: This approach would not work for our case because we have only about 3 hrs of logs.
      */
-    def get_simple_date_features(date: java.util.Date): (Int, Int, Int, Int, Int) = {
+    def get_simple_date_features(date: java.util.Date): (Int, Int, Int, Int) = {
         val cal = java.util.Calendar.getInstance()
         cal.setTime(date)
-        val fiver_hour =  (cal.get(java.util.Calendar.MINUTE) + 5) / 5
+        //val fiver_hour =  (cal.get(java.util.Calendar.MINUTE) + 5) / 5
         (cal.get(java.util.Calendar.MONTH), 
             cal.get(java.util.Calendar.WEEK_OF_MONTH), 
             cal.get(java.util.Calendar.DAY_OF_WEEK),
-            cal.get(java.util.Calendar.HOUR_OF_DAY),
-            fiver_hour)
+            cal.get(java.util.Calendar.HOUR_OF_DAY))
     }
     
     def get_dummy_encoding[A](levels: Seq[A]): Map[A, Array[Double]] = {
@@ -717,9 +810,9 @@ class Weblog() extends java.io.Serializable {
         hour_of_day_enc: Map[Int, Array[Double]] = get_dummy_encoding(0 to 23),
         fiver_hour_enc: Map[Int, Array[Double]] = get_dummy_encoding(1 to 12))
     
-    def encode_simple_date_features(s: (Int, Int, Int, Int, Int), dummies: DummyEnc): Array[Double] = {
+    def encode_simple_date_features(s: (Int, Int, Int, Int), dummies: DummyEnc): Array[Double] = {
         dummies.month_enc(s._1) ++ dummies.week_of_month_enc(s._2) ++ 
-            dummies.day_of_week_enc(s._3) ++ dummies.hour_of_day_enc(s._4) ++ dummies.fiver_hour_enc(s._5)
+            dummies.day_of_week_enc(s._3) ++ dummies.hour_of_day_enc(s._4) // ++ dummies.fiver_hour_enc(s._5)
     }
     
     def generate_load_regression_data(reqs: org.apache.spark.rdd.RDD[Request]): 

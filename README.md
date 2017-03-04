@@ -16,7 +16,7 @@ To run (make a folder 'output' in order for output files to be generated):
     
 The command line options are:
 
-    - operation: [0|1|2|3|4|5|6]
+    - operation: [0|1|2|3|4|5|6|7|8]
     
         0: generate url / user profile data -- outputs file(s) in 'output' folder
             showing users with longest sessions, etc.
@@ -32,14 +32,24 @@ The command line options are:
             logs for a particular IP and builds transition probability tables. Then
             simulates the user (say) 200 times and reports average session length,
             average number of unique urls, average number of total urls per session.
+            This operation should be used when the starting state is known for the IP,
+            say, at the current time. Then it might be useful for predicting the remaining
+            duration and unique URLs. Some optimizations like prefetching and caching
+            pages might be built around this.
         
         4: generate time series data for server load -- useful to inspect and understand
             server load charactaristics.
         
         5: generate server load data for regression -- useful only if we have lots of
-            data over multiple years. Usefulness is mostly moot at this point for this project.
+            data over multiple years. Usefulness is mostly moot at this point for this 
+            project.
         
         6: predict load for next minute -- Basically average of last 5 minutes load.
+        
+        7: predict average session duration for an IP by regression. Some exploration
+            reveals that there might be some predictive power in this, but not much.
+            
+        8: predict average number of unique URL visits. Similar to operation 7 above.
         
     - ip address: client IP -- required only for operation 3 (above).
 
@@ -218,3 +228,23 @@ The response is:
 The disadvantage of trying to model the user/IP is that we would have no prediction for a new user under this model. Another issue is that currently the model uses Markov model of first order. This is probably not very accurate. But using higher order Markov models would take more memory.
 
 There are other options as well for predicting average session times for an IP for instance using some kind of regression on the IP address. A rough analysis in R using simple linear model shows that the coefficients for individual parts of the IP do come out [somewhat] significant. I find this surprising. However, the coefficients suggest that (for practical purposes) we would be no worse off than predicting simply the global average session time.
+
+
+A sample command for computing average session duration with operation '7' is:
+
+    spark-submit --master local[4] target/WeblogChallenge-0.1.0-jar-with-dependencies.jar 7 220.226.206.7
+
+The response is:
+    
+    Predicted avg session duration for ip 220.226.206.7 is 241.0019974519274
+
+From the data, it seems like the above prediction is a long way off.
+
+
+A sample command for computing average # session unique urls with operation '8' is:
+
+    spark-submit --master local[4] target/WeblogChallenge-0.1.0-jar-with-dependencies.jar 8 117.195.91.36
+
+The response is:
+    
+    Predicted avg unique urls for ip 117.195.91.36 is 3.923076882929557
