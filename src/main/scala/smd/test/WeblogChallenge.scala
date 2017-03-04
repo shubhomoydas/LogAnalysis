@@ -710,14 +710,14 @@ class Weblog() extends java.io.Serializable {
      * for efficiency, but this data structure is pretty small and hence we 
      * might not need to go to such lengths.
      */
-    case class DummyEnc[A] (
-        month_enc: Map[A, Array[Double]] = get_dummy_encoding(0 to 11),
-        week_of_month_enc: Map[A, Array[Double]] = get_dummy_encoding(1 to 5),
-        day_of_week_enc: Map[A, Array[Double]] = get_dummy_encoding(1 to 7),
-        hour_of_day_enc: Map[A, Array[Double]] = get_dummy_encoding(0 to 23),
-        fiver_hour_enc: Map[A, Array[Double]] = get_dummy_encoding(1 to 12))
+    case class DummyEnc (
+        month_enc: Map[Int, Array[Double]] = get_dummy_encoding(0 to 11),
+        week_of_month_enc: Map[Int, Array[Double]] = get_dummy_encoding(1 to 5),
+        day_of_week_enc: Map[Int, Array[Double]] = get_dummy_encoding(1 to 7),
+        hour_of_day_enc: Map[Int, Array[Double]] = get_dummy_encoding(0 to 23),
+        fiver_hour_enc: Map[Int, Array[Double]] = get_dummy_encoding(1 to 12))
     
-    def encode_simple_date_features(s: (Int, Int, Int, Int, Int), dummies: DummyEnc[Int]): Array[Double] = {
+    def encode_simple_date_features(s: (Int, Int, Int, Int, Int), dummies: DummyEnc): Array[Double] = {
         dummies.month_enc(s._1) ++ dummies.week_of_month_enc(s._2) ++ 
             dummies.day_of_week_enc(s._3) ++ dummies.hour_of_day_enc(s._4) ++ dummies.fiver_hour_enc(s._5)
     }
@@ -728,7 +728,7 @@ class Weblog() extends java.io.Serializable {
         val per_interval_counts = reqs.map(req => (get_simple_date_features(req.timestamp), 1)).
             countByKey()
         
-        val dm = DummyEnc[Int]()
+        val dm = DummyEnc()
         val insts = per_interval_counts.map(x => org.apache.spark.mllib.regression.LabeledPoint(1.0*x._2, 
                           org.apache.spark.mllib.linalg.Vectors.dense(encode_simple_date_features(x._1, dm))))
         
@@ -768,7 +768,7 @@ class Weblog() extends java.io.Serializable {
      * Predict server load: Approach 3
      * ===============================
      * 
-     * Filter requests from past n minutes till last one miute and compute 
+     * Filter requests from past n minutes till last one minute and compute 
      * average load within this interval.
      * 
      * Note: To predict next minute we are not using the current minute because

@@ -1,6 +1,7 @@
 /bin
 /target
 /personal
+/output
 .DS_Store
 data/split
 *.log
