@@ -32,10 +32,11 @@ The command line options are:
             logs for a particular IP and builds transition probability tables. Then
             simulates the user (say) 200 times and reports average session length,
             average number of unique urls, average number of total urls per session.
-            This operation should be used when the starting state is known for the IP,
-            say, at the current time. Then it might be useful for predicting the remaining
-            duration and unique URLs. Some optimizations like prefetching and caching
-            pages might be built around this.
+            This operation should be used when a starting URL can be determined for the 
+            IP at the current time such as the starting URL for an active session for the
+            IP. It might the be useful for predicting the remaining duration and unique
+            URLs. Some optimizations like prefetching and caching pages might be built
+            around this.
         
         4: generate time series data for server load -- useful to inspect and understand
             server load charactaristics.
