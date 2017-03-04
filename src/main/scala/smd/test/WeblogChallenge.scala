@@ -45,7 +45,7 @@ object Weblog extends java.io.Serializable {
     val conf = new SparkConf().setAppName("Weblog")
     val sc = new SparkContext(conf)
 
-    val weblog = new Weblog(sc)
+    val weblog = new Weblog()
     
     val debug_mode = false
     
@@ -230,7 +230,7 @@ object Weblog extends java.io.Serializable {
   }
 }
 
-class Weblog(sc: SparkContext) extends java.io.Serializable {
+class Weblog() extends java.io.Serializable {
 
     import java.io._
     import util.Random
@@ -463,23 +463,13 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
     
     def get_unique_urls(user_profiles: org.apache.spark.rdd.RDD[UserProfile]):
             org.apache.spark.rdd.RDD[(Int, UrlInfo)] = {
-        var unique_urls: org.apache.spark.rdd.RDD[(Int, UrlInfo)] = null
-        if (false) {
-            // load precomputed URL info if saved earlier.
-            // Note: this should really be done by caller method and moved out of here.
-            val urls_file = "output/urls.txt"
-            unique_urls = sc.textFile(urls_file).map(line => {
-                val tkns = line.split(",")
-                (tkns(0).toInt, UrlInfo(tkns(0).toInt, tkns(1), tkns(2).toInt, tkns(3).toDouble))
-            })
-        } else {
-            unique_urls = user_profiles.map(up => up.reqs).flatMap(x => x).
-                map(req => (req.url, (req.time_to_reach, 1))).
-                reduceByKey((a, b) => (a._1 + b._1, a._2 + b._2)).
-                sortBy(x=>(-1)*x._2._2).
-                zipWithIndex.map(url => (url._2.toInt, UrlInfo(url._2.toInt, url._1._1, 
-                                                               url._1._2._2, url._1._2._1*1.0/url._1._2._2)))
-        }
+      
+        val unique_urls = user_profiles.map(up => up.reqs).flatMap(x => x).
+          map(req => (req.url, (req.time_to_reach, 1))).
+          reduceByKey((a, b) => (a._1 + b._1, a._2 + b._2)).
+          sortBy(x=>(-1)*x._2._2).
+          zipWithIndex.map(url => (url._2.toInt, UrlInfo(url._2.toInt, url._1._1, 
+                                                         url._1._2._2, url._1._2._1*1.0/url._1._2._2)))
         unique_urls
     }
     
@@ -652,18 +642,7 @@ class Weblog(sc: SparkContext) extends java.io.Serializable {
         val n_sims = 200
         val start_url_id = -2  // -2 is default initial state
         
-        var raw_trans: org.apache.spark.rdd.RDD[(Int, Int, Double, Double)] = null
-        if (false) {
-          // load precomputed transition probabilities if saved earlier.
-          // Note: this should really be done by caller method and moved out of here.
-          val transitions_file = "output/transitions.txt"
-          raw_trans = sc.textFile(transitions_file).map(line => {
-            val tkns = line.split(",")
-            (tkns(0).toInt, tkns(1).toInt, tkns(2).toDouble, tkns(3).toDouble)
-          })
-        } else {
-          raw_trans = generate_transition_data(user_profiles, id2url, url2id)
-        }
+        val raw_trans = generate_transition_data(user_profiles, id2url, url2id)
     
         val transinfo = build_transition_lookups(raw_trans)
     
