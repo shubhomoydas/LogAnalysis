@@ -212,3 +212,9 @@ A sample command for computing average session time, nav. length, unique URLs wi
 The response is:
     
     Avg Time: 74.0, avg nav length: 6.0, avg unique url: 5.0
+
+*Important*: The prediction using Markov model should be done based on the user's *current* state. The implemented API actually takes as input a starting state and then predicts stats from then on. If the vanilla starting state is used (-2), then the predicted avg times might be similar to straight-up averages across the user's sessions.
+
+The disadvantage of trying to model the user/IP is that we would have no prediction for a new user under this model. Another issue is that currently the model uses Markov model of first order. This is probably not very accurate. But using higher order Markov models would take more memory.
+
+There are other options as well for predicting average session times for an IP for instance using some kind of regression on the IP address. A rough analysis in R using simple linear model shows that the coefficients for individual parts of the IP do come out [somewhat] significant. I find this surprising. However, the coefficients suggest that (for practical purposes) we would be no worse off than predicting simply the global average session time.

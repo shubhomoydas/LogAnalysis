@@ -2,6 +2,7 @@
 /target
 /personal
 /output
+/metastore_db
 .DS_Store
 data/split
 *.log
